@@ -1,273 +1,348 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
-	"math"
-	"os"
+	"io/ioutil"
+	"regexp"
 	"strconv"
 	"strings"
 )
 
-type Tile struct {
-	Type         string
-	TravelDiff   int
-	Resource     string
-	ResourceAmt  int
-	ResourceUsed bool
-}
+type PartyRole string
+
+const (
+	Scout    PartyRole = "Scout"
+	Healer   PartyRole = "Healer"
+	Gatherer PartyRole = "Gatherer"
+)
 
 type Map struct {
-	Size          [2]int
-	Tiles         [][]Tile
-	StepAllowance int
-	//Resources     map[string]int
-	Resources     []Resource
-	ResourceQuota map[string]int
-	QuotaMult     int
+	StepAllowance   int
+	ResourceInfo    []ResourceInfo
+	Quota           []int
+	QuotaMultiplier int
+	MapSize         [2]int
+	Grid            [][]string
 }
 
-type Party struct {
-	Scout         bool
-	Healer        bool
-	Gatherer      bool
-	StepBonus     int
-	ResourceBonus int
+type ResourceInfo struct {
+	Type       string
+	Occurrence int
+	Locations  [][2]int
 }
 
-type Resource struct {
-	Name string
-	Row  int
-	Col  int
-}
-
-func (p *Party) SetParty(members []string) {
-	p.Scout = false
-	p.Healer = false
-	p.Gatherer = false
-	p.StepBonus = 1
-	p.ResourceBonus = 1
-	for _, member := range members {
-		switch member {
-		case "Scout":
-			p.Scout = true
-		case "Healer":
-			p.Healer = true
-			p.StepBonus = int(math.Ceil(float64(p.StepBonus) * 1.2))
-		case "Gatherer":
-			p.Gatherer = true
-			p.ResourceBonus = 2
-		}
-	}
-}
-
-func (m *Map) LoadMap(filePath string) {
-	data, err := os.Open(filePath)
-	if err != nil {
-		fmt.Println("Error reading map file:", err)
-		return
-	}
-	defer data.Close()
-	scanner := bufio.NewScanner(data)
-	for scanner.Scan() {
-		line := scanner.Text()
-		parts := strings.Split(line, " ")
-		if parts[0] == "Step_allowance" {
-			m.StepAllowance = atoi(parts[1])
-		} else if parts[0] == "Quota" {
-			quotas := strings.Split(parts[1], ",")
-			m.ResourceQuota["Coal"] = atoi(quotas[0])
-			m.ResourceQuota["Fish"] = atoi(quotas[1])
-			m.ResourceQuota["Scrap_metal"] = atoi(quotas[2])
-		} else if parts[0] == "Quota_multiplier" {
-			m.QuotaMult = atoi(parts[1])
-		} else if parts[0] == "map_size" {
-			size := strings.Split(parts[1], "x")
-			m.Size[0], m.Size[1] = atoi(size[0]), atoi(size[1])
-			m.Tiles = make([][]Tile, m.Size[0])
-			for i := range m.Tiles {
-				m.Tiles[i] = make([]Tile, m.Size[1])
-			}
-		} else if m.Size[0] > 0 {
-			for i := range m.Tiles {
-				for j := range m.Tiles[i] {
-					m.Tiles[i][j].Type = parts[i*m.Size[1]+j]
-					switch m.Tiles[i][j].Type {
-					case "S":
-						m.Tiles[i][j].TravelDiff = 1
-					case "I":
-						m.Tiles[i][j].TravelDiff = 5
-					case "TS":
-						m.Tiles[i][j].TravelDiff = 10
-					case "M":
-						m.Tiles[i][j].TravelDiff = 15
-					}
-				}
-			}
-		} else if strings.Contains(parts[0], ",") {
-			resource := strings.Split(parts[0], ",")[0]
-			resourceCount := atoi(strings.Split(parts[0], ",")[1])
-			for i := 1; i <= resourceCount; i++ {
-				coords := strings.Split(parts[i], ",")
-				row, col := atoi(coords[0]), atoi(coords[1])
-				m.Resources = append(m.Resources, Resource{Name: resource, Row: row, Col: col})
-			}
-		}
-	}
-}
-
-// func (m *Map) LoadMap(filePath string) {
-// 	file, err := os.Open(filePath)
-// 	if err != nil {
-// 		fmt.Println("Error reading map file:", err)
-// 		return
-// 	}
-// 	defer file.Close()
-
-// 	scanner := bufio.NewScanner(file)
-// 	scanner.Split(bufio.ScanLines)
-
-// 	lines := make([]string, 0)
-// 	for scanner.Scan() {
-// 		lines = append(lines, scanner.Text())
-// 	}
-
-// 	if err := scanner.Err(); err != nil {
-// 		fmt.Println("Error reading map file:", err)
-// 		return
-// 	}
-
-// 	m.Resources = make(map[string]int)
-// 	m.ResourceQuota = make(map[string]int)
-// 	for _, line := range lines {
-// 		if strings.HasPrefix(line, "map_size") {
-// 			size := strings.Split(strings.TrimPrefix(line, "map_size="), "x")
-// 			m.Size[0], _ = strconv.Atoi(size[0])
-// 			m.Size[1], _ = strconv.Atoi(size[1])
-// 			m.Tiles = make([][]Tile, m.Size[0])
-// 			for i := range m.Tiles {
-// 				m.Tiles[i] = make([]Tile, m.Size[1])
-// 			}
-// 		} else if strings.HasPrefix(line, "Step_allowance") {
-// 			m.StepAllowance, _ = strconv.Atoi(strings.TrimPrefix(line, "Step_allowance="))
-// 		} else if strings.Contains(line, ",") {
-// 			parts := strings.Split(line, " ")
-// 			if strings.Contains(parts[0], ",") {
-// 				quota := strings.Split(parts[0], ",")
-// 				m.ResourceQuota[quota[0]] = atoi(quota[1])
-// 				m.ResourceQuota[quota[2]] = atoi(quota[3])
-// 				m.ResourceQuota[quota[4]] = atoi(quota[5])
-// 			} else if strings.HasPrefix(parts[0], "Quota_multiplier") {
-// 				m.QuotaMult, _ = strconv.Atoi(strings.TrimPrefix(parts[0], "Quota_multiplier="))
-// 			} else {
-// 				resource := strings.Split(parts[0], ",")
-// 				m.Resources[resource[0]] = atoi(resource[1])
-// 				location := strings.Split(parts[1], ",")
-// 				row, _ := strconv.Atoi(location[0])
-// 				col, _ := strconv.Atoi(location[1])
-// 				m.Tiles[row][col].Resource = resource[0]
-// 				m.Tiles[row][col].ResourceAmt = m.Resources[resource[0]]
-// 			}
-// 		} else if m.Size[0] > 0 {
-// 			i := 0
-// 			for i < m.Size[0] {
-// 				tiles := strings.Split(line, ",")
-// 				for j, tile := range tiles {
-// 					m.Tiles[i][j].Type = tile
-// 					switch tile {
-// 					case "S":
-// 						m.Tiles[i][j].TravelDiff = 1
-// 					case "I":
-// 						m.Tiles[i][j].TravelDiff = 5
-// 					case "TS":
-// 						m.Tiles[i][j].TravelDiff = 10
-// 					case "M":
-// 						m.Tiles[i][j].TravelDiff = 15
-// 					}
-// 				}
-// 				i++
-// 			}
-// 		}
-// 	}
-// }
-
-func (m *Map) PrintMap() {
-	fmt.Println("Map size:", m.Size[0], "x", m.Size[1])
-	fmt.Println("Step allowance:", m.StepAllowance)
-	fmt.Println("Resources:", m.Resources)
-	fmt.Println("Resource quota:", m.ResourceQuota)
-	fmt.Println("Quota multiplier:", m.QuotaMult)
-	fmt.Println("Tiles:")
-	for _, row := range m.Tiles {
-		for _, tile := range row {
-			fmt.Print(tile.Type, " ")
-		}
-		fmt.Println()
-	}
-}
-
-func (m *Map) FindPath(p *Party) [][]int {
-	//var path [][]int
-	// Implement pathfinding algorithm here
-	path := [][]int{{0, 0}, {0, 1}, {0, 2}, {0, 3}, {1, 3}, {2, 3}, {2, 4}}
-	return path
-}
-
-func (m *Map) CalculateScore(path [][]int, p *Party) int {
-	score := 0
-	stepCount := 0
-	resources := make(map[string]int)
-	for i := 0; i < len(path)-1; i++ {
-		r1, c1 := path[i][0], path[i][1]
-		r2, c2 := path[i+1][0], path[i+1][1]
-		tile := m.Tiles[r2][c2]
-		if tile.Resource != "" && !tile.ResourceUsed {
-			resources[tile.Resource] += tile.ResourceAmt * p.ResourceBonus
-			tile.ResourceUsed = true
-		}
-		stepCount += int(math.Abs(float64(r1-r2)) + math.Abs(float64(c1-c2)))
-		score += tile.TravelDiff
-	}
-	if p.Scout {
-		score = int(float64(score) / 2)
-	}
-	if stepCount > m.StepAllowance*p.StepBonus {
-		score -= (stepCount - m.StepAllowance*p.StepBonus)
-	}
-	for resource, quota := range m.ResourceQuota {
-		if resources[resource] >= quota {
-			score += resources[resource] * m.QuotaMult
-		}
-	}
-	return score
-}
-
-func atoi(str string) int {
-	num, err := strconv.Atoi(str)
-	if err != nil {
-		fmt.Println("Error converting string to int:", err)
-		return 0
-	}
-	return num
+type Submission struct {
+	Party []PartyRole `json:"Party"`
+	Path  [][2]int    `json:"Path"`
 }
 
 func main() {
-	var party Party
-	var map1 Map
-	map1.LoadMap("./../../maps/map.txt")
-	map1.PrintMap()
-	party.SetParty([]string{"Scout", "Gatherer"})
-	path := map1.FindPath(&party)
-	fmt.Println("Path:", path)
-	fmt.Println("Score:", map1.CalculateScore(path, &party))
-
-	// Output the results in json format
-	result := map[string]interface{}{
-		"Party": party,
-		"Path":  path,
-		"Score": map1.CalculateScore(path, &party),
+	// Read map data from file
+	data, err := ioutil.ReadFile("map.txt")
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
 	}
-	resultJson, _ := json.Marshal(result)
-	fmt.Println(string(resultJson))
+
+	// Parse map data
+	m, err := parseMap(string(data))
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+
+	// Choose a party
+	party := []PartyRole{Scout, Gatherer}
+
+	// Find the optimal path
+	path := findPath(m, party)
+
+	// Generate the submission
+	submission := Submission{
+		Party: party,
+		Path:  path,
+	}
+
+	// Print the submission in JSON format
+	jsonBytes, err := json.MarshalIndent(submission, "", "  ")
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+	fmt.Println(string(jsonBytes))
+}
+
+func parseMap(data string) (Map, error) {
+	lines := strings.Split(data, "\n")
+
+	stepAllowanceStr := strings.Split(lines[0], "=")
+	stepAllowance, err := strconv.Atoi(stepAllowanceStr[1])
+	if err != nil {
+		return Map{}, fmt.Errorf("failed to parse step allowance: %w", err)
+	}
+
+	resourceInfoCount, err := strconv.Atoi(lines[1][strings.Index(lines[1], ",")+1:])
+	if err != nil {
+		return Map{}, fmt.Errorf("failed to parse resource info count: %w", err)
+	}
+
+	resourceInfo := make([]ResourceInfo, resourceInfoCount)
+	for i := 0; i < resourceInfoCount; i++ {
+		parts := strings.Split(lines[2+i], ",")
+		resourceType := parts[0]
+		occurrence, err := strconv.Atoi(parts[1])
+		if err != nil {
+			return Map{}, fmt.Errorf("failed to parse occurrence: %w", err)
+		}
+
+		locations := make([][2]int, occurrence)
+		for j := 0; j < occurrence; j++ {
+			locationParts := strings.Split(parts[2+j], ",")
+			x, err := strconv.Atoi(locationParts[0])
+			if err != nil {
+				return Map{}, fmt.Errorf("failed to parse location x: %w", err)
+			}
+			y, err := strconv.Atoi(locationParts[1])
+			if err != nil {
+				return Map{}, fmt.Errorf("failed to parse location y: %w", err)
+			}
+			locations[j] = [2]int{x, y}
+		}
+
+		resourceInfo[i] = ResourceInfo{
+			Type:       resourceType,
+			Occurrence: occurrence,
+			Locations:  locations,
+		}
+	}
+
+	quotaLine := 2 + resourceInfoCount
+	quotaParts := strings.Split(lines[quotaLine], "=")[1]
+	quotaStr := strings.Split(quotaParts, ",")
+	quota := make([]int, len(quotaStr))
+	for i, part := range quotaStr {
+		value, err := strconv.Atoi(part)
+		if err != nil {
+			return Map{}, fmt.Errorf("failed to parse quota: %w", err)
+		}
+		quota[i] = value
+	}
+
+	quotaMultStr := strings.Split(lines[quotaLine+1], "=")
+	quotaMult, err := strconv.Atoi(quotaMultStr[1])
+	if err != nil {
+		return Map{}, fmt.Errorf("failed to parse quota multiplier: %w", err)
+	}
+
+	mapSizeStr := strings.Split(lines[quotaLine+2], "=")[1]
+	mapSizeParts := strings.Split(mapSizeStr, "x")
+	mapSize := [2]int{}
+	for i, part := range mapSizeParts {
+		value, err := strconv.Atoi(part)
+		if err != nil {
+			return Map{}, fmt.Errorf("failed to parse map size: %w", err)
+		}
+		mapSize[i] = value
+	}
+
+	grid := make([][]string, mapSize[0])
+	for i := 0; i < mapSize[0]; i++ {
+		grid[i] = strings.Split(lines[quotaLine+3+i], "")
+	}
+
+	return Map{
+		StepAllowance:   stepAllowance,
+		ResourceInfo:    resourceInfo,
+		Quota:           quota,
+		QuotaMultiplier: quotaMult,
+		MapSize:         mapSize,
+		Grid:            grid,
+	}, nil
+}
+
+type state struct {
+	position [2]int
+	steps    int
+	resCount []int
+	path     [][2]int
+	health   int
+}
+
+func findPath(m Map, party []PartyRole) [][2]int {
+	start := [2]int{0, 0}
+	visited := make(map[[2]int]bool)
+	roleEffects := make(map[string]int)
+	healerPresent := false
+
+	for _, role := range party {
+		effectMultiplier, ok := roleEffects[string(role)]
+		if !ok {
+			effectMultiplier = 1
+		}
+		roleEffects[string(role)] = effectMultiplier
+
+		if role == Healer {
+			healerPresent = true
+		}
+	}
+
+	var bestPath [][2]int
+	var bestScore int
+
+	var dfs func(curr state) int
+	dfs = func(curr state) int {
+		if curr.steps > m.StepAllowance {
+			return 0
+		}
+
+		visited[curr.position] = true
+		defer func() { visited[curr.position] = false }()
+
+		score := 0
+		for i, count := range curr.resCount {
+			effectMultiplier, ok := roleEffects[m.ResourceInfo[i].Type]
+			if !ok {
+				effectMultiplier = 1
+			}
+			score += count * m.Quota[i] * effectMultiplier
+		}
+
+		for _, neighbor := range getNeighbors(curr.position, m, visited) {
+			newHealth := curr.health - 1
+			if healerPresent {
+				newHealth = min(newHealth+1, 10)
+			}
+			if newHealth > 0 {
+				newState := curr.move(neighbor, m, roleEffects)
+				newState.health = newHealth
+				newScore := dfs(newState)
+				if newScore > bestScore {
+					bestScore = newScore
+					bestPath = newState.path
+				}
+			}
+		}
+		return bestScore
+	}
+
+	dfs(state{
+		position: start,
+		steps:    0,
+		resCount: make([]int, len(m.ResourceInfo)),
+		path:     [][2]int{start},
+		health:   10,
+	})
+
+	return bestPath
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func getNeighbors(pos [2]int, m Map, visited map[[2]int]bool) [][2]int {
+	directions := [][2]int{
+		{-1, 0}, // Up
+		{1, 0},  // Down
+		{0, -1}, // Left
+		{0, 1},  // Right
+	}
+	neighbors := [][2]int{}
+
+	for _, d := range directions {
+		newPos := [2]int{pos[0] + d[0], pos[1] + d[1]}
+		if newPos[0] >= 0 && newPos[0] < len(m.Grid) && newPos[1] >= 0 && newPos[1] < len(m.Grid[0]) && !visited[newPos] {
+			neighbors = append(neighbors, newPos)
+		}
+	}
+
+	return neighbors
+}
+
+func (s state) move(newPos [2]int, m Map, roleEffects map[string]int) state {
+	newState := state{
+		position: newPos,
+		steps:    s.steps + 1,
+		resCount: make([]int, len(s.resCount)),
+		path:     append(s.path, newPos),
+	}
+
+	copy(newState.resCount, s.resCount)
+
+	cellStr := m.Grid[newPos[0]][newPos[1]]
+	cell, err := strconv.Atoi(cellStr)
+	if err != nil {
+		fmt.Printf("Error converting cell string to integer: %v\n", err)
+		return newState
+	}
+
+	if cell > 0 {
+		effectMultiplier := roleEffects[m.ResourceInfo[cell-1].Type]
+		newState.resCount[cell-1] += effectMultiplier
+	}
+
+	return newState
+}
+
+func calculateScore(path [][2]int, m Map, party []PartyRole) int {
+	roleEffects := make(map[string]int)
+
+	for _, role := range party {
+		switch role {
+		case Scout:
+			roleEffects["Scout"] = 2
+		case Healer:
+			roleEffects["Healer"] = 1 // You may need to adjust this value based on the Healer's effect
+		case Gatherer:
+			roleEffects["Gatherer"] = 3
+		}
+	}
+
+	travelScore := 0
+	resourceCounts := make([]int, len(m.ResourceInfo))
+
+	validCharPattern := regexp.MustCompile(`^[0-9]$`)
+	for i := 0; i < len(path)-1; i++ {
+		currPos := path[i]
+		nextPos := path[i+1]
+
+		// Check if the cell string is a valid character
+		if !validCharPattern.MatchString(m.Grid[currPos[0]][currPos[1]]) {
+			fmt.Printf("Invalid character encountered: %s\n", m.Grid[currPos[0]][currPos[1]])
+			continue
+		}
+
+		// Calculate travel score
+		difficulty, err := strconv.Atoi(m.Grid[currPos[0]][currPos[1]])
+		if err != nil {
+			fmt.Printf("Error converting cell string to integer: %v\n", err)
+			continue
+		}
+		travelScore += difficulty
+
+		// Update resource counts
+		resourceType := m.Grid[nextPos[0]][nextPos[1]]
+		for i, resInfo := range m.ResourceInfo {
+			if resInfo.Type == resourceType {
+				resourceCounts[i]++
+				break
+			}
+		}
+	}
+
+	resourceScore := 0
+	for i, count := range resourceCounts {
+		roleEffect, ok := roleEffects[m.ResourceInfo[i].Type]
+		if !ok {
+			roleEffect = 1
+		}
+		resourceScore += count * m.Quota[i] * roleEffect
+	}
+
+	totalScore := resourceScore - travelScore
+	return totalScore
 }
